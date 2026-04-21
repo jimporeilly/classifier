@@ -1,0 +1,31 @@
+# Build artifacts
+build/
+*.o
+*.a
+*.so
+camera_classifier
+
+# IDE settings (optional - you might want to keep .vscode/)
+.vscode/
+*.swp
+*.swo
+*~
+
+# Model files (if large)
+*.pt
+*.pth
+*.onnx
+
+# Captured frames
+captured_*.jpg
+captured_*.png
+
+# Logs
+*.log
+
+# LibTorch (don't commit - install separately on each machine)
+libtorch/
+
+# OS files
+.DS_Store
+Thumbs.db
