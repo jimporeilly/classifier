@@ -1,45 +1,40 @@
 #!/bin/bash
-
-# Build script for camera_classifier application
-
 set -e
-
 echo "=== Camera Classifier Build Script ==="
 
-# Check for required environment variables
-if [ -z "$LIBTORCH_PATH" ]; then
-    echo "Error: LIBTORCH_PATH environment variable not set"
-    echo "Please set it to your libtorch installation directory:"
-    echo "  export LIBTORCH_PATH=/path/to/libtorch"
+# Auto-detect libtorch location
+if [ -d "/opt/libtorch" ]; then
+    LIBTORCH="/opt/libtorch"
+elif [ -d "$HOME/libtorch" ]; then
+    LIBTORCH="$HOME/libtorch"
+else
+    echo "Error: libtorch not found at /opt/libtorch or ~/libtorch"
+    exit 1
+fi
+echo "Using libtorch at: $LIBTORCH"
+
+# Auto-detect opencv include path
+if pkg-config --exists opencv4; then
+    OPENCV_CFLAGS=$(pkg-config --cflags opencv4)
+    OPENCV_LIBS=$(pkg-config --libs opencv4)
+else
+    echo "Error: opencv4 not found via pkg-config"
     exit 1
 fi
 
-# Create build directory
-BUILD_DIR="build"
-if [ -d "$BUILD_DIR" ]; then
-    echo "Cleaning existing build directory..."
-    rm -rf "$BUILD_DIR"
-fi
+mkdir -p build
 
-mkdir -p "$BUILD_DIR"
-cd "$BUILD_DIR"
+g++ -g -std=c++17 src/*.cpp -o build/camera_classifier \
+  -Iinclude \
+  $OPENCV_CFLAGS \
+  -I${LIBTORCH}/include \
+  -I${LIBTORCH}/include/torch/csrc/api/include \
+  -D_GLIBCXX_USE_CXX11_ABI=1 \
+  -L/usr/lib/x86_64-linux-gnu \
+  -L${LIBTORCH}/lib \
+  -lopencv_core -lopencv_imgproc -lopencv_highgui -lopencv_imgcodecs -lopencv_videoio \
+  -ltorch -lc10 -ltorch_cpu -lpthread \
+  -Wl,-rpath,${LIBTORCH}/lib \
+  $OPENCV_LIBS
 
-# Configure with CMake
-echo "Configuring with CMake..."
-cmake -DCMAKE_PREFIX_PATH="$LIBTORCH_PATH" ..
-
-# Build
-echo "Building..."
-make -j$(nproc)
-
-echo ""
-echo "=== Build Complete ==="
-echo "Executable location: $BUILD_DIR/camera_classifier"
-echo ""
-echo "To run:"
-echo "  cd $BUILD_DIR"
-echo "  ./camera_classifier --camera 0"
-echo ""
-echo "To run with a model:"
-echo "  ./camera_classifier --camera 0 --model /path/to/model.pt"
-echo ""
+echo "=== Build Complete: build/camera_classifier ==="
