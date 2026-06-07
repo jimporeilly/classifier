@@ -3,6 +3,7 @@
 #include "classifier_thread.h"
 #include "correlation_thread.h"
 #include "gui_handler.h"
+#include "nano_trigger.h"
 
 #include <iostream>
 #include <memory>
@@ -54,12 +55,26 @@ int main(int argc, char* argv[]) {
     state->camera_id = camera_id;
     state->status_message = "Initializing...";
 
+    // NanoTrigger trigger("/dev/ttyACM0", /*threshold=*/0.75);
+    NanoTrigger trigger("/dev/ttyACM0", 0.75);  // triggers when confidence > 75%
+
+    if (!trigger.isOpen()) return 1;
+    if (!trigger.ping()) {
+        // Not fatal, but worth logging; Nano may still be booting
+        printf("[main] Nano ping failed — continuing anyway\n");
+    }
+
+
     // Create thread objects
+
+
+
+
     CameraThread camera_thread(state, camera_id);
     ClassifierThread classifier_thread(state);
-    CorrelationThread correlation_thread(state);  // ADD THIS
+    CorrelationThread correlation_thread(state, &trigger);
 
-    GUIHandler gui(state);
+    GUIHandler gui(state, &trigger);
 
     // Load model if specified
     if (!model_path.empty()) {

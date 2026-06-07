@@ -5,8 +5,9 @@
 int GUIHandler::confidence_trackbar_value_ = 50;
 int GUIHandler::correlation_trackbar_value_ = 10;  // ADD THIS LINE
 
-GUIHandler::GUIHandler(std::shared_ptr<AppState> state)
+GUIHandler::GUIHandler(std::shared_ptr<AppState> state, NanoTrigger* trigger)
     : state_(state),
+      trigger_(trigger),
       window_name_("Camera Classifier"),
       panel_width_(1280),
       panel_height_(180),
@@ -23,6 +24,8 @@ GUIHandler::~GUIHandler() {
 void GUIHandler::onConfidenceChange(int value, void* userdata) {
     GUIHandler* gui = static_cast<GUIHandler*>(userdata);
     gui->state_->confidence_threshold = value / 100.0f;
+    if (gui->trigger_)
+    gui->trigger_->setThreshold(value / 100.0f);  // keep trigger in sync
 }
 
 void GUIHandler::initialize() {
@@ -34,7 +37,7 @@ void GUIHandler::initialize() {
                       &confidence_trackbar_value_, 100,
                       onConfidenceChange, this);
 
-    cv::createTrackbar("Change Threshold %", window_name_,
+    cv::createTrackbar("Trigger Threshold %", window_name_,
                       &correlation_trackbar_value_, 100, nullptr);
 
     createControlPanel();
@@ -77,6 +80,8 @@ void GUIHandler::updateControlPanel() {
     drawButton(control_panel_, cv::Rect(btn_x0 +   btn_w + btn_gap,   btn_y, btn_w, btn_h), "CAPTURE",     cv::Scalar(150, 150, 255));
     drawButton(control_panel_, cv::Rect(btn_x0 + 2*(btn_w + btn_gap), btn_y, btn_w, btn_h), "CLEAR QUEUE", cv::Scalar(200, 200, 100));
     drawButton(control_panel_, cv::Rect(btn_x0 + 3*(btn_w + btn_gap), btn_y, btn_w, btn_h), "EXIT",        cv::Scalar(80, 80, 180));
+    drawButton(control_panel_, cv::Rect(btn_x0 + 3*(btn_w + btn_gap), btn_y, btn_w, btn_h), "EXIT",        cv::Scalar(80, 80, 180));
+    drawButton(control_panel_, cv::Rect(btn_x0 + 4*(btn_w + btn_gap), btn_y, btn_w, btn_h), "TRIGGER D2",  cv::Scalar(0, 140, 255));
 
     // --- Info row ---
     const int info_y = btn_y + btn_h + 25;
@@ -144,6 +149,14 @@ void GUIHandler::handleMouseClick(int event, int x, int y) {
         state_->running = false;
         return;
     }
+    if (cv::Rect(btn_x0 + 4*(btn_w + btn_gap), btn_y, btn_w, btn_h).contains(cv::Point(x, panel_y))) {
+    if (trigger_ && trigger_->isOpen()) {
+        trigger_->manualTrigger();
+        std::lock_guard<std::mutex> lock(state_->message_mutex);
+        state_->status_message = "D2 triggered manually";
+    }
+    return;
+}
 }
 
 void GUIHandler::mouseCallback(int event, int x, int y, int flags, void* userdata) {
