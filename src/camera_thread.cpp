@@ -13,22 +13,22 @@ CameraThread::~CameraThread() {
 
 bool CameraThread::initialize() {
     capture_.open(camera_id_);
-    
+
     if (!capture_.isOpened()) {
         std::cerr << "Error: Could not open camera " << camera_id_ << std::endl;
         std::lock_guard<std::mutex> lock(state_->message_mutex);
         state_->status_message = "Camera initialization failed!";
         return false;
     }
-    
+
     // Set camera properties for better performance
     capture_.set(cv::CAP_PROP_FRAME_WIDTH, 640);
     capture_.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
     capture_.set(cv::CAP_PROP_FPS, 30);
-    
+
     std::lock_guard<std::mutex> lock(state_->message_mutex);
     state_->status_message = "Camera initialized successfully";
-    
+
     std::cout << "Camera " << camera_id_ << " initialized successfully" << std::endl;
     return true;
 }
@@ -107,9 +107,11 @@ void CameraThread::run() {
             std::cout << "Frame saved: " << filename << std::endl;
         }
     }
-    
+
     cleanup();
 }
+
+
 
 void CameraThread::cleanup() {
     if (capture_.isOpened()) {
