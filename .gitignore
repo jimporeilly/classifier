@@ -29,3 +29,4 @@ libtorch/
 # OS files
 .DS_Store
 Thumbs.db
+*.whl

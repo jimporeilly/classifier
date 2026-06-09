@@ -2,6 +2,7 @@
 #define GUI_HANDLER_H
 
 #include "shared_data.h"
+#include "nano_trigger.h"
 #include <opencv2/opencv.hpp>
 #include <memory>
 
@@ -9,7 +10,7 @@ class GUIHandler {
 private:
     std::shared_ptr<AppState> state_;
     const std::string window_name_;
-
+NanoTrigger* trigger_;
     cv::Mat control_panel_;
     int panel_width_;
     int panel_height_;
@@ -31,7 +32,7 @@ private:
     static void mouseCallback(int event, int x, int y, int flags, void* userdata);
 
 public:
-    GUIHandler(std::shared_ptr<AppState> state);
+    GUIHandler(std::shared_ptr<AppState> state, NanoTrigger* trigger);
     ~GUIHandler();
 
     void initialize();

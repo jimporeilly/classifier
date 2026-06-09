@@ -1,8 +1,11 @@
 #include "correlation_thread.h"
 #include <iostream>
 
-CorrelationThread::CorrelationThread(std::shared_ptr<AppState> state)
-    : app_state_(state) {
+CorrelationThread::CorrelationThread(std::shared_ptr<AppState> state, NanoTrigger* trigger)
+    : app_state_(state),
+    trigger_(trigger),
+    has_previous_frame_(false)
+    {
 }
 
 CorrelationThread::~CorrelationThread() {
@@ -64,49 +67,58 @@ double CorrelationThread::calculateCorrelation(const cv::Mat& img1, const cv::Ma
     return numerator / (denom1 * denom2);
 }
 
-cv::Mat CorrelationThread::createDifferenceImage(const cv::Mat& img1, const cv::Mat& img2, int threshold_percent) {
-    cv::Mat gray1, gray2;
-    if (img1.channels() == 3) {
-        cv::cvtColor(img1, gray1, cv::COLOR_BGR2GRAY);
-    } else {
-        gray1 = img1.clone();
+cv::Mat CorrelationThread::createDifferenceImage(const cv::Mat& prev, const cv::Mat& curr,
+                                                  const std::vector<cv::Rect>& hot_cells) {
+    // Start with a grey version of current frame so context is visible
+    cv::Mat grey;
+    cv::cvtColor(curr, grey, cv::COLOR_BGR2GRAY);
+    cv::Mat display;
+    cv::cvtColor(grey, display, cv::COLOR_GRAY2BGR);
+
+    // Paint only the hot cells red
+    for (const cv::Rect& cell : hot_cells) {
+        cv::Mat cell_curr = curr(cell);
+        cv::Mat cell_prev = prev(cell);
+
+        // Per-pixel absolute difference within the cell
+        cv::Mat diff;
+        cv::absdiff(cell_curr, cell_prev, diff);
+        cv::cvtColor(diff, diff, cv::COLOR_BGR2GRAY);
+
+        // Threshold to get a mask of changed pixels
+        cv::Mat mask;
+        cv::threshold(diff, mask, 20, 255, cv::THRESH_BINARY);
+
+        // Apply red tint to changed pixels only
+        cv::Mat red_cell(cell.height, cell.width, CV_8UC3, cv::Scalar(0, 0, 255));
+        red_cell.copyTo(display(cell), mask);
     }
 
-    if (img2.channels() == 3) {
-        cv::cvtColor(img2, gray2, cv::COLOR_BGR2GRAY);
-    } else {
-        gray2 = img2.clone();
-    }
+    return display;
+}
 
-    if (gray1.size() != gray2.size()) {
-        cv::resize(gray2, gray2, gray1.size());
-    }
+double CorrelationThread::calculateCellCorrelation(const cv::Mat& a, const cv::Mat& b, const cv::Rect& region) {
+    cv::Mat cell_a = a(region);
+    cv::Mat cell_b = b(region);
+    // Reuse your existing calculateCorrelation logic on the sub-region
+    return calculateCorrelation(cell_a, cell_b);
+}
 
-    // Calculate absolute difference
-    cv::Mat diff;
-    cv::absdiff(gray1, gray2, diff);
+std::vector<cv::Rect> CorrelationThread::detectLocalMotion(const cv::Mat& prev, const cv::Mat& curr, double threshold) {
+    int cell_w = prev.cols / grid_cols_;
+    int cell_h = prev.rows / grid_rows_;
+    std::vector<cv::Rect> hot_cells;
 
-    // Create output image (start with current frame)
-    cv::Mat result = img2.clone();
-
-    // Calculate threshold value (percentage of 255)
-    double threshold_value = (threshold_percent / 100.0) * 255.0;
-
-    // Paint red pixels where difference exceeds threshold
-    for (int y = 0; y < diff.rows; y++) {
-        for (int x = 0; x < diff.cols; x++) {
-            if (diff.at<uchar>(y, x) > threshold_value) {
-                // Paint this pixel red
-                if (result.channels() == 3) {
-                    result.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 0, 255); // BGR format: red
-                } else {
-                    result.at<uchar>(y, x) = 255;
-                }
+    for (int row = 0; row < grid_rows_; row++) {
+        for (int col = 0; col < grid_cols_; col++) {
+            cv::Rect region(col * cell_w, row * cell_h, cell_w, cell_h);
+            double cell_corr = calculateCellCorrelation(prev, curr, region);
+            if (cell_corr < threshold) {
+                hot_cells.push_back(region);
             }
         }
     }
-
-    return result;
+    return hot_cells;
 }
 
 void CorrelationThread::run() {
@@ -126,14 +138,24 @@ void CorrelationThread::run() {
                 if (has_previous_frame_ && !previous_frame_.empty()) {
                     // Calculate correlation
                     double correlation = calculateCorrelation(previous_frame_, current_frame);
+
                     app_state_->correlation_value = correlation;
 
-                    // Create difference image with red highlights
-                    int threshold = app_state_->correlation_threshold.load();
-                    cv::Mat diff_image = createDifferenceImage(previous_frame_, current_frame, threshold);
+                     // Use local motion detection instead of global correlation
+                    double threshold = app_state_->confidence_threshold.load();
+                    std::vector<cv::Rect> hot_cells = detectLocalMotion(previous_frame_, current_frame, threshold);
 
-                    // Push to diff queue
-                    app_state_->diff_image_queue.push(diff_image);
+                if (app_state_->trigger_enabled)
+                {
+                    if (!hot_cells.empty() && trigger_)
+                    trigger_->manualTrigger();
+                }
+
+                    
+
+                // Pass hot cells into diff image so only they go red
+                cv::Mat diff_image = createDifferenceImage(previous_frame_, current_frame, hot_cells);
+                app_state_->diff_image_queue.push(diff_image);
                 }
 
                 previous_frame_ = current_frame.clone();

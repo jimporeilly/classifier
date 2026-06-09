@@ -81,6 +81,7 @@ struct AppState {
     std::mutex correlation_sync_mutex;
     std::condition_variable correlation_cv;
     std::atomic<bool> correlation_done{true};
+    std::atomic<bool> trigger_enabled{false};  // default OFF on startup
 
     std::mutex message_mutex;
     std::string status_message;
