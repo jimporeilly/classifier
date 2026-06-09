@@ -58,7 +58,10 @@ int main(int argc, char* argv[]) {
     // NanoTrigger trigger("/dev/ttyACM0", /*threshold=*/0.75);
     NanoTrigger trigger("/dev/ttyACM0", 0.75);  // triggers when confidence > 75%
 
-    if (!trigger.isOpen()) return 1;
+    if (!trigger.isOpen()) {
+        std::lock_guard<std::mutex> lock(state->message_mutex);
+        state->status_message = "Arduino not connected - trigger disabled";
+    }
     if (!trigger.ping()) {
         // Not fatal, but worth logging; Nano may still be booting
         printf("[main] Nano ping failed — continuing anyway\n");

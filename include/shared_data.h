@@ -65,7 +65,7 @@ struct AppState {
     std::atomic<bool> paused{false};
     std::atomic<bool> save_frame{false};
     std::atomic<int> camera_id{0};
-    std::atomic<float> confidence_threshold{0.5f};
+    std::atomic<float> confidence_threshold{0.1f};
     std::atomic<double> correlation_value{1.0};
     std::atomic<int> correlation_threshold{10};  // ADD THIS: percentage change threshold
 
@@ -81,6 +81,7 @@ struct AppState {
     std::mutex correlation_sync_mutex;
     std::condition_variable correlation_cv;
     std::atomic<bool> correlation_done{true};
+    std::atomic<bool> trigger_enabled{false};  // default OFF on startup
 
     std::mutex message_mutex;
     std::string status_message;

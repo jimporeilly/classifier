@@ -145,8 +145,11 @@ void CorrelationThread::run() {
                     double threshold = app_state_->confidence_threshold.load();
                     std::vector<cv::Rect> hot_cells = detectLocalMotion(previous_frame_, current_frame, threshold);
 
-                if (!hot_cells.empty() && trigger_)
-                    trigger_->manualTrigger();
+                if (app_state_->trigger_enabled)
+                {
+                    if (!hot_cells.empty() && trigger_)
+                        trigger_->manualTrigger();
+                }
 
                 // Pass hot cells into diff image so only they go red
                 cv::Mat diff_image = createDifferenceImage(previous_frame_, current_frame, hot_cells);

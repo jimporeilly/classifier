@@ -2,7 +2,7 @@
 #include <iostream>
 
 // Static member initialization
-int GUIHandler::confidence_trackbar_value_ = 50;
+int GUIHandler::confidence_trackbar_value_ = 12;
 int GUIHandler::correlation_trackbar_value_ = 10;  // ADD THIS LINE
 
 GUIHandler::GUIHandler(std::shared_ptr<AppState> state, NanoTrigger* trigger)
@@ -74,15 +74,16 @@ void GUIHandler::updateControlPanel() {
     // --- Buttons row (left-aligned, small) ---
     const int btn_w = 130, btn_h = 30, btn_y = 20, btn_gap = 8, btn_x0 = 10;
 
+    std::string auto_text = state_->trigger_enabled ? "AUTO: ON" : "AUTO: OFF";
+    cv::Scalar auto_color = state_->trigger_enabled ? cv::Scalar(0, 200, 0) : cv::Scalar(0, 0, 180);
     std::string pause_text = state_->paused ? "RESUME" : "PAUSE";
     cv::Scalar pause_color = state_->paused ? cv::Scalar(100, 200, 100) : cv::Scalar(100, 100, 200);
     drawButton(control_panel_, cv::Rect(btn_x0,                       btn_y, btn_w, btn_h), pause_text,    pause_color);
     drawButton(control_panel_, cv::Rect(btn_x0 +   btn_w + btn_gap,   btn_y, btn_w, btn_h), "CAPTURE",     cv::Scalar(150, 150, 255));
     drawButton(control_panel_, cv::Rect(btn_x0 + 2*(btn_w + btn_gap), btn_y, btn_w, btn_h), "CLEAR QUEUE", cv::Scalar(200, 200, 100));
     drawButton(control_panel_, cv::Rect(btn_x0 + 3*(btn_w + btn_gap), btn_y, btn_w, btn_h), "EXIT",        cv::Scalar(80, 80, 180));
-    drawButton(control_panel_, cv::Rect(btn_x0 + 3*(btn_w + btn_gap), btn_y, btn_w, btn_h), "EXIT",        cv::Scalar(80, 80, 180));
     drawButton(control_panel_, cv::Rect(btn_x0 + 4*(btn_w + btn_gap), btn_y, btn_w, btn_h), "TRIGGER D2",  cv::Scalar(0, 140, 255));
-
+    drawButton(control_panel_, cv::Rect(btn_x0 + 5*(btn_w + btn_gap), btn_y, btn_w, btn_h), auto_text,     auto_color);
     // --- Info row ---
     const int info_y = btn_y + btn_h + 25;
     const int col2_x = panel_width_ / 2;
@@ -157,6 +158,12 @@ void GUIHandler::handleMouseClick(int event, int x, int y) {
     }
     return;
 }
+if (cv::Rect(btn_x0 + 5*(btn_w + btn_gap), btn_y, btn_w, btn_h).contains(cv::Point(x, panel_y))) {
+        state_->trigger_enabled = !state_->trigger_enabled;
+        std::lock_guard<std::mutex> lock(state_->message_mutex);
+        state_->status_message = state_->trigger_enabled ? "Auto-trigger ON" : "Auto-trigger OFF";
+        return;
+    }
 }
 
 void GUIHandler::mouseCallback(int event, int x, int y, int flags, void* userdata) {
