@@ -248,40 +248,47 @@ void CorrelationThread::run() {
 
                     int cell_w = current_frame.cols / grid_cols_;
                     int cell_h = (current_frame.rows / 2) / grid_rows_;
-                    bool do_trigger = (in_window1 || in_window2) &&
-                                     hot_cells.size() > 1 &&
+                    // Core motion-threshold check, independent of the alarm enable button
+                    // and the active-hours windows — those only gate the physical D2 alarm,
+                    // not whether evidence gets captured.
+                    bool threshold_exceeded = hot_cells.size() > 1 &&
                                      hot_cells.size() <= max_trigger_hot_cells_ &&
                                      !too_many_elevated &&
                                      hasAdjacentHotCells(hot_cells, cell_w, cell_h, roi_y);
-                    app_state_->trigger_active = do_trigger;
+                    bool do_trigger = threshold_exceeded && (in_window1 || in_window2);
+                    app_state_->trigger_active = threshold_exceeded;
 
                 // Build annotated diff image (cell values + hot cell overlay)
                 cv::Mat diff_image = createDifferenceImage(previous_frame_, current_frame, hot_cells);
 
-                if (app_state_->trigger_enabled)
+                if (threshold_exceeded)
                 {
-                    if (do_trigger && trigger_ && trigger_->manualTrigger()) {
-                        // Save annotated diff image to disk
-                        mkdir(app_state_->save_dir.c_str(), 0755);
-                        std::string filename = app_state_->save_dir + "/trigger_" +
-                                               std::to_string(std::time(nullptr)) + ".jpg";
-                        cv::imwrite(filename, diff_image);
+                    // Always save evidence when the threshold is surpassed, even if the
+                    // alarm button is off or the current time falls outside the active-hours
+                    // windows — those should only suppress the physical D2 alarm pulse.
+                    mkdir(app_state_->save_dir.c_str(), 0755);
+                    std::string filename = app_state_->save_dir + "/trigger_" +
+                                           std::to_string(std::time(nullptr)) + ".jpg";
+                    cv::imwrite(filename, diff_image);
 
-                        // Build thumbnail from annotated image
-                        int tw = AppState::THUMBNAIL_H * diff_image.cols / diff_image.rows;
-                        cv::Mat thumb;
-                        cv::resize(diff_image, thumb, cv::Size(tw, AppState::THUMBNAIL_H));
-                        {
-                            std::lock_guard<std::mutex> lock(app_state_->thumbnail_mutex);
-                            int idx = app_state_->thumbnail_write_idx;
-                            if ((int)app_state_->trigger_thumbnails.size() <= idx)
-                                app_state_->trigger_thumbnails.resize(idx + 1);
-                            app_state_->trigger_thumbnails[idx] = thumb;
-                            app_state_->thumbnail_write_idx =
-                                (idx + 1) % AppState::MAX_THUMBNAILS;
-                            if (app_state_->thumbnail_count < AppState::MAX_THUMBNAILS)
-                                app_state_->thumbnail_count++;
-                        }
+                    // Build thumbnail from annotated image
+                    int tw = AppState::THUMBNAIL_H * diff_image.cols / diff_image.rows;
+                    cv::Mat thumb;
+                    cv::resize(diff_image, thumb, cv::Size(tw, AppState::THUMBNAIL_H));
+                    {
+                        std::lock_guard<std::mutex> lock(app_state_->thumbnail_mutex);
+                        int idx = app_state_->thumbnail_write_idx;
+                        if ((int)app_state_->trigger_thumbnails.size() <= idx)
+                            app_state_->trigger_thumbnails.resize(idx + 1);
+                        app_state_->trigger_thumbnails[idx] = thumb;
+                        app_state_->thumbnail_write_idx =
+                            (idx + 1) % AppState::MAX_THUMBNAILS;
+                        if (app_state_->thumbnail_count < AppState::MAX_THUMBNAILS)
+                            app_state_->thumbnail_count++;
+                    }
+
+                    if (app_state_->trigger_enabled && do_trigger && trigger_) {
+                        trigger_->manualTrigger();
                     }
                 }
 

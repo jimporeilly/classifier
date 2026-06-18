@@ -7,6 +7,8 @@
 #include <X11/Xatom.h>
 
 namespace {
+    const std::string kAppVersion = "v1.2";
+
     Window findXWindowByTitle(Display* dpy, Window root, const std::string& title) {
         char* name = nullptr;
         if (XFetchName(dpy, root, &name) && name) {
@@ -440,6 +442,12 @@ void GUIHandler::displayFrame(const cv::Mat& frame) {
 
     updateControlPanel();
     control_panel_.copyTo(composite(cv::Rect(0, actual_display_height_ + stats_height_, total_width, panel_height_)));
+
+    int baseline = 0;
+    cv::Size version_size = cv::getTextSize(kAppVersion, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseline);
+    cv::putText(composite, kAppVersion,
+                cv::Point(composite.cols - version_size.width - 10, version_size.height + 8),
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(200, 200, 200), 1);
 
     cv::imshow(window_name_, composite);
 }
