@@ -4,10 +4,12 @@
 #include <opencv2/opencv.hpp>
 #include <torch/torch.h>
 #include <queue>
+#include <vector>
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
 #include <string>
+#include <cstdlib>
 
 // Thread-safe queue for passing frames between threads
 template<typename T>
@@ -61,13 +63,14 @@ public:
 
 // Shared application state
 struct AppState {
+    static constexpr int THUMBNAIL_H = 120;
+    static constexpr int MAX_THUMBNAILS = 10;
     std::atomic<bool> running{true};
     std::atomic<bool> paused{false};
     std::atomic<bool> save_frame{false};
     std::atomic<int> camera_id{0};
-    std::atomic<float> confidence_threshold{0.1f};
     std::atomic<double> correlation_value{1.0};
-    std::atomic<int> correlation_threshold{10};  // ADD THIS: percentage change threshold
+    std::atomic<int> correlation_threshold{5};  // ADD THIS: percentage change threshold
 
     ThreadSafeQueue<cv::Mat> frame_queue;
     ThreadSafeQueue<cv::Mat> diff_image_queue;  // ADD THIS: for highlighted difference images
@@ -82,6 +85,24 @@ struct AppState {
     std::condition_variable correlation_cv;
     std::atomic<bool> correlation_done{true};
     std::atomic<bool> trigger_enabled{false};  // default OFF on startup
+    std::atomic<bool> trigger_active{false};   // true when motion threshold exceeded this frame
+
+    // Hour-of-day windows (1-24) during which auto-trigger is allowed to fire. Two
+    // independent windows, adjustable from the GUI's active-hours bar.
+    std::atomic<int> active_window1_start{5};
+    std::atomic<int> active_window1_end{7};
+    std::atomic<int> active_window2_start{20};
+    std::atomic<int> active_window2_end{22};
+
+    // Trigger capture thumbnails — ring buffer, written by correlation thread, read by GUI
+    std::vector<cv::Mat> trigger_thumbnails;
+    std::mutex thumbnail_mutex;
+    int thumbnail_write_idx{0};
+    int thumbnail_count{0};
+    std::string save_dir{[] {
+        const char* home = std::getenv("HOME");
+        return (home ? std::string(home) : std::string(".")) + "/trigger_captures";
+    }()};
 
     std::mutex message_mutex;
     std::string status_message;

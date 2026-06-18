@@ -84,6 +84,9 @@ void CameraThread::run() {
         state_->frame_queue.push(frame.clone());
         state_->correlation_queue.push(frame.clone());
 
+        // Minimum inter-snap delay
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+
         // Calculate FPS
         frame_count++;
         auto current_time = std::chrono::steady_clock::now();

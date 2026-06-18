@@ -156,7 +156,7 @@ void ClassifierThread::run() {
         auto result = classify(frame);
         
         // Update shared state with results
-        if (result.confidence >= state_->confidence_threshold) {
+        {
             std::lock_guard<std::mutex> lock(state_->result_mutex);
             state_->classification_result = result.class_name;
             state_->classification_confidence = result.confidence;

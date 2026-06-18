@@ -9,6 +9,7 @@ add_definitions(-D_GLIBCXX_USE_CXX11_ABI=1)
 find_package(Torch REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc highgui imgcodecs videoio)
 find_package(Threads REQUIRED)
+find_package(X11 REQUIRED)
 
 # Include directories
 include_directories(${CMAKE_SOURCE_DIR}/include)
@@ -34,6 +35,7 @@ target_link_libraries(camera_classifier
     ${OpenCV_LIBRARIES}
     ${TORCH_LIBRARIES}
     ${CMAKE_THREAD_LIBS_INIT}
+    ${X11_LIBRARIES}
 )
 
 

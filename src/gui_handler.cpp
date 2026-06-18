@@ -1,16 +1,39 @@
 #include "gui_handler.h"
 #include <iostream>
+#include <algorithm>
+#include <cmath>
+#include <ctime>
+#include <X11/Xlib.h>
+#include <X11/Xatom.h>
+
+namespace {
+    Window findXWindowByTitle(Display* dpy, Window root, const std::string& title) {
+        char* name = nullptr;
+        if (XFetchName(dpy, root, &name) && name) {
+            bool match = (title == name);
+            XFree(name);
+            if (match) return root;
+        }
+        Window dummy, *children = nullptr;
+        unsigned int n = 0;
+        if (!XQueryTree(dpy, root, &dummy, &dummy, &children, &n)) return 0;
+        Window found = 0;
+        for (unsigned int i = 0; i < n && !found; i++)
+            found = findXWindowByTitle(dpy, children[i], title);
+        if (children) XFree(children);
+        return found;
+    }
+}
 
 // Static member initialization
-int GUIHandler::confidence_trackbar_value_ = 12;
-int GUIHandler::correlation_trackbar_value_ = 10;  // ADD THIS LINE
+int GUIHandler::correlation_trackbar_value_ = 5;
 
 GUIHandler::GUIHandler(std::shared_ptr<AppState> state, NanoTrigger* trigger)
     : state_(state),
       trigger_(trigger),
       window_name_("Camera Classifier"),
       panel_width_(1280),
-      panel_height_(180),
+      panel_height_(240 + AppState::THUMBNAIL_H + 4),
       stats_height_(30),
       frame_display_width_(640),
       frame_display_height_(480),
@@ -21,27 +44,181 @@ GUIHandler::~GUIHandler() {
     cleanup();
 }
 
-void GUIHandler::onConfidenceChange(int value, void* userdata) {
-    GUIHandler* gui = static_cast<GUIHandler*>(userdata);
-    gui->state_->confidence_threshold = value / 100.0f;
-    if (gui->trigger_)
-    gui->trigger_->setThreshold(value / 100.0f);  // keep trigger in sync
+void GUIHandler::disableCloseButton() {
+    Display* dpy = XOpenDisplay(nullptr);
+    if (!dpy) return;
+
+    cv::waitKey(100);  // let the window render before we search for it
+    Window win = findXWindowByTitle(dpy, DefaultRootWindow(dpy), window_name_);
+    if (win) {
+        // Motif WM hints: allow resize/move/minimize/maximize but NOT close
+        struct MWMHints {
+            unsigned long flags, functions, decorations;
+            long          input_mode;
+            unsigned long status;
+        } hints = {};
+        hints.flags     = 1UL;                              // MWM_HINTS_FUNCTIONS
+        hints.functions = (1UL<<1)|(1UL<<2)|(1UL<<3)|(1UL<<4); // resize|move|minimize|maximize
+        Atom atom = XInternAtom(dpy, "_MOTIF_WM_HINTS", False);
+        XChangeProperty(dpy, win, atom, atom, 32, PropModeReplace,
+                        reinterpret_cast<unsigned char*>(&hints), 5);
+        XFlush(dpy);
+    }
+    XCloseDisplay(dpy);
 }
 
 void GUIHandler::initialize() {
     cv::namedWindow(window_name_, cv::WINDOW_AUTOSIZE);
+    disableCloseButton();
     cv::setMouseCallback(window_name_, mouseCallback, this);
-
-    confidence_trackbar_value_ = static_cast<int>(state_->confidence_threshold * 100);
-    cv::createTrackbar("Confidence %", window_name_,
-                      &confidence_trackbar_value_, 100,
-                      onConfidenceChange, this);
 
     cv::createTrackbar("Trigger Threshold %", window_name_,
                       &correlation_trackbar_value_, 100, nullptr);
 
     createControlPanel();
     std::cout << "GUI initialized" << std::endl;
+}
+
+cv::Rect GUIHandler::hourBarRect() const {
+    const int btn_y = 20, btn_h = 30;
+    const int info_y = btn_y + btn_h + 25;
+    const int bar_x0 = 20;
+    const int bar_y  = info_y + 85;
+    return cv::Rect(bar_x0, bar_y, panel_width_ - 2 * bar_x0, 22);
+}
+
+int GUIHandler::xFromHour(int hour) const {
+    cv::Rect r = hourBarRect();
+    hour = std::max(1, std::min(25, hour));
+    return r.x + static_cast<int>(std::lround((hour - 1) * (r.width / 24.0)));
+}
+
+int GUIHandler::hourFromX(int x) const {
+    cv::Rect r = hourBarRect();
+    double seg = r.width / 24.0;
+    int hour = static_cast<int>((x - r.x) / seg) + 1;
+    return std::max(1, std::min(24, hour));
+}
+
+void GUIHandler::drawHourBar(cv::Mat& img) {
+    cv::Rect r = hourBarRect();
+
+    cv::putText(img, "Active Hours (local time) - auto-trigger only fires inside these windows",
+                cv::Point(r.x, r.y - 8), cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(220, 220, 220), 1);
+
+    cv::rectangle(img, r, cv::Scalar(70, 70, 70), -1);
+    cv::rectangle(img, r, cv::Scalar(120, 120, 120), 1);
+
+    for (int h = 1; h <= 24; h++) {
+        int x = xFromHour(h);
+        cv::line(img, cv::Point(x, r.y), cv::Point(x, r.y + r.height), cv::Scalar(100, 100, 100), 1);
+        if (h % 2 == 1) {
+            cv::putText(img, std::to_string(h), cv::Point(x + 2, r.y + r.height + 14),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.35, cv::Scalar(180, 180, 180), 1);
+        }
+    }
+
+    int w1s = state_->active_window1_start.load();
+    int w1e = state_->active_window1_end.load();
+    int w2s = state_->active_window2_start.load();
+    int w2e = state_->active_window2_end.load();
+
+    cv::Rect band1(xFromHour(w1s), r.y, xFromHour(w1e + 1) - xFromHour(w1s), r.height);
+    cv::Rect band2(xFromHour(w2s), r.y, xFromHour(w2e + 1) - xFromHour(w2s), r.height);
+
+    cv::rectangle(img, band1, cv::Scalar(0, 165, 255), -1);
+    cv::rectangle(img, band2, cv::Scalar(255, 100, 0), -1);
+    cv::rectangle(img, band1, cv::Scalar(255, 255, 255), 1);
+    cv::rectangle(img, band2, cv::Scalar(255, 255, 255), 1);
+
+    std::time_t now = std::time(nullptr);
+    std::tm local_tm;
+    localtime_r(&now, &local_tm);
+    int cur_hour = local_tm.tm_hour + 1;
+    int cx = (xFromHour(cur_hour) + xFromHour(cur_hour + 1)) / 2;
+    cv::line(img, cv::Point(cx, r.y - 4), cv::Point(cx, r.y + r.height + 4), cv::Scalar(0, 255, 0), 2);
+}
+
+void GUIHandler::handleHourBarMouse(int event, int x, int y) {
+    const int edge_tol = 6;
+
+    if (event == cv::EVENT_LBUTTONUP) {
+        hour_bar_drag_ = HourBarDrag::NONE;
+        return;
+    }
+
+    if (event == cv::EVENT_LBUTTONDOWN) {
+        cv::Rect r = hourBarRect();
+        cv::Rect hit(r.x - edge_tol, r.y - edge_tol, r.width + 2 * edge_tol, r.height + 2 * edge_tol);
+        if (!hit.contains(cv::Point(x, y))) return;
+
+        int w1s = state_->active_window1_start.load();
+        int w1e = state_->active_window1_end.load();
+        int w2s = state_->active_window2_start.load();
+        int w2e = state_->active_window2_end.load();
+
+        int x_w1s = xFromHour(w1s), x_w1e = xFromHour(w1e + 1);
+        int x_w2s = xFromHour(w2s), x_w2e = xFromHour(w2e + 1);
+
+        if (std::abs(x - x_w1s) <= edge_tol)      hour_bar_drag_ = HourBarDrag::WIN1_START;
+        else if (std::abs(x - x_w1e) <= edge_tol) hour_bar_drag_ = HourBarDrag::WIN1_END;
+        else if (x > x_w1s && x < x_w1e)          hour_bar_drag_ = HourBarDrag::WIN1_MOVE;
+        else if (std::abs(x - x_w2s) <= edge_tol) hour_bar_drag_ = HourBarDrag::WIN2_START;
+        else if (std::abs(x - x_w2e) <= edge_tol) hour_bar_drag_ = HourBarDrag::WIN2_END;
+        else if (x > x_w2s && x < x_w2e)          hour_bar_drag_ = HourBarDrag::WIN2_MOVE;
+        else return;
+
+        hour_bar_drag_anchor_x_ = x;
+        hour_bar_drag_anchor_start_ = (hour_bar_drag_ == HourBarDrag::WIN1_MOVE) ? w1s :
+                                       (hour_bar_drag_ == HourBarDrag::WIN2_MOVE) ? w2s : 0;
+        hour_bar_drag_anchor_end_   = (hour_bar_drag_ == HourBarDrag::WIN1_MOVE) ? w1e :
+                                       (hour_bar_drag_ == HourBarDrag::WIN2_MOVE) ? w2e : 0;
+        return;
+    }
+
+    if (event == cv::EVENT_MOUSEMOVE && hour_bar_drag_ != HourBarDrag::NONE) {
+        int hour = hourFromX(x);
+
+        switch (hour_bar_drag_) {
+            case HourBarDrag::WIN1_START: {
+                int end = state_->active_window1_end.load();
+                state_->active_window1_start = std::min(hour, end);
+                break;
+            }
+            case HourBarDrag::WIN1_END: {
+                int start = state_->active_window1_start.load();
+                state_->active_window1_end = std::max(hour, start);
+                break;
+            }
+            case HourBarDrag::WIN2_START: {
+                int end = state_->active_window2_end.load();
+                state_->active_window2_start = std::min(hour, end);
+                break;
+            }
+            case HourBarDrag::WIN2_END: {
+                int start = state_->active_window2_start.load();
+                state_->active_window2_end = std::max(hour, start);
+                break;
+            }
+            case HourBarDrag::WIN1_MOVE: {
+                int delta = hourFromX(x) - hourFromX(hour_bar_drag_anchor_x_);
+                int width = hour_bar_drag_anchor_end_ - hour_bar_drag_anchor_start_;
+                int new_start = std::max(1, std::min(24 - width, hour_bar_drag_anchor_start_ + delta));
+                state_->active_window1_start = new_start;
+                state_->active_window1_end = new_start + width;
+                break;
+            }
+            case HourBarDrag::WIN2_MOVE: {
+                int delta = hourFromX(x) - hourFromX(hour_bar_drag_anchor_x_);
+                int width = hour_bar_drag_anchor_end_ - hour_bar_drag_anchor_start_;
+                int new_start = std::max(1, std::min(24 - width, hour_bar_drag_anchor_start_ + delta));
+                state_->active_window2_start = new_start;
+                state_->active_window2_end = new_start + width;
+                break;
+            }
+            default: break;
+        }
+    }
 }
 
 void GUIHandler::createControlPanel() {
@@ -71,6 +248,10 @@ void GUIHandler::updateControlPanel() {
 
     state_->correlation_threshold = correlation_trackbar_value_;
 
+    double correlation = state_->correlation_value.load();
+    int correlation_percent = static_cast<int>(correlation * 100);
+    int corr_threshold = state_->correlation_threshold.load();
+
     // --- Buttons row (left-aligned, small) ---
     const int btn_w = 130, btn_h = 30, btn_y = 20, btn_gap = 8, btn_x0 = 10;
 
@@ -84,6 +265,12 @@ void GUIHandler::updateControlPanel() {
     drawButton(control_panel_, cv::Rect(btn_x0 + 3*(btn_w + btn_gap), btn_y, btn_w, btn_h), "EXIT",        cv::Scalar(80, 80, 180));
     drawButton(control_panel_, cv::Rect(btn_x0 + 4*(btn_w + btn_gap), btn_y, btn_w, btn_h), "TRIGGER D2",  cv::Scalar(0, 140, 255));
     drawButton(control_panel_, cv::Rect(btn_x0 + 5*(btn_w + btn_gap), btn_y, btn_w, btn_h), auto_text,     auto_color);
+
+    bool trig_exceeded = state_->trigger_active.load();
+    cv::Scalar trig_color = trig_exceeded ? cv::Scalar(0, 0, 200) : cv::Scalar(0, 180, 0);
+    std::string trig_text  = trig_exceeded ? "TRIG: ACTIVE"       : "TRIG: READY";
+    drawButton(control_panel_, cv::Rect(btn_x0 + 6*(btn_w + btn_gap), btn_y, btn_w, btn_h), trig_text, trig_color);
+
     // --- Info row ---
     const int info_y = btn_y + btn_h + 25;
     const int col2_x = panel_width_ / 2;
@@ -97,11 +284,8 @@ void GUIHandler::updateControlPanel() {
     cv::putText(control_panel_, "STATUS: " + status,
                 cv::Point(20, info_y), cv::FONT_HERSHEY_SIMPLEX, 0.5, text_color, 1);
 
-    double correlation = state_->correlation_value.load();
-    int correlation_percent = static_cast<int>(correlation * 100);
-    int threshold = state_->correlation_threshold.load();
     cv::putText(control_panel_,
-                "Correlation: " + std::to_string(correlation_percent) + "% (Threshold: " + std::to_string(threshold) + "%)",
+                "Correlation: " + std::to_string(correlation_percent) + "% (Threshold: " + std::to_string(corr_threshold) + "%)",
                 cv::Point(20, info_y + 30), cv::FONT_HERSHEY_SIMPLEX, 0.5, text_color, 1);
 
     std::string result;
@@ -121,13 +305,37 @@ void GUIHandler::updateControlPanel() {
         cv::putText(control_panel_, conf_buf, cv::Point(col2_x, info_y + 60),
                    cv::FONT_HERSHEY_SIMPLEX, 0.5, text_color, 1);
     }
+
+    drawHourBar(control_panel_);
+
+    // --- Thumbnail strip ---
+    {
+        std::lock_guard<std::mutex> lock(state_->thumbnail_mutex);
+        int n = state_->thumbnail_count;
+        if (n > 0) {
+            const int strip_y = panel_height_ - AppState::THUMBNAIL_H - 2;
+            int x = 2;
+            for (int i = 0; i < n && x < panel_width_; i++) {
+                const cv::Mat& thumb = state_->trigger_thumbnails[i];
+                if (thumb.empty()) continue;
+                cv::Rect dst(x, strip_y, thumb.cols, thumb.rows);
+                if (dst.x + dst.width <= panel_width_ && dst.y + dst.height <= panel_height_)
+                    thumb.copyTo(control_panel_(dst));
+                x += thumb.cols + 2;
+            }
+        }
+    }
 }
 
 void GUIHandler::handleMouseClick(int event, int x, int y) {
-    if (event != cv::EVENT_LBUTTONDOWN) return;
-    if (y < actual_display_height_ + stats_height_) return;  // click in video or stats area, ignore
-
     const int panel_y = y - actual_display_height_ - stats_height_;
+
+    handleHourBarMouse(event, x, panel_y);
+    if (hour_bar_drag_ != HourBarDrag::NONE) return;  // active-hours bar owns this gesture
+
+    if (event != cv::EVENT_LBUTTONDOWN) return;
+    if (panel_y < 0) return;  // click in video or stats area, ignore
+
     const int btn_w = 130, btn_h = 30, btn_y = 20, btn_gap = 8, btn_x0 = 10;
 
     if (cv::Rect(btn_x0,                       btn_y, btn_w, btn_h).contains(cv::Point(x, panel_y))) {

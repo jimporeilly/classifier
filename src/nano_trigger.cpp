@@ -25,7 +25,8 @@ static speed_t baudToSpeed(int baud) {
 // ── NanoTrigger ───────────────────────────────────────────────────────────────
 
 NanoTrigger::NanoTrigger(const std::string& port, double threshold, int baud)
-    : fd_(-1), threshold_(threshold), triggered_(false)
+    : fd_(-1), threshold_(threshold), triggered_(false),
+      last_trigger_time_(std::chrono::steady_clock::now() - std::chrono::seconds(COOLDOWN_SECONDS))
 {
     if (!openPort(port, baud)) {
         std::cerr << "[NanoTrigger] Failed to open " << port << "\n";
@@ -71,9 +72,17 @@ bool NanoTrigger::openPort(const std::string& port, int baud) {
     return true;
 }
 
-void NanoTrigger::manualTrigger() {
+bool NanoTrigger::manualTrigger() {
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_trigger_time_).count();
+    if (elapsed < COOLDOWN_SECONDS) {
+        std::cout << "[NanoTrigger] Cooldown active (" << (COOLDOWN_SECONDS - elapsed) << "s remaining)\n";
+        return false;
+    }
+    last_trigger_time_ = now;
     sendCommand("TRIGGER");
-    std::cout << "[NanoTrigger] Manual trigger → D2 pulse\n";
+    std::cout << "[NanoTrigger] Trigger → D2 pulse\n";
+    return true;
 }
 
 void NanoTrigger::sendCommand(const std::string& cmd) {
