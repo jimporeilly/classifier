@@ -13,7 +13,7 @@
 void printUsage(const char* program_name) {
     std::cout << "Usage: " << program_name << " [options]\n"
               << "Options:\n"
-              << "  --camera <id>        Camera device ID (default: 0)\n"
+              << "  --camera <id>        Left CSI sensor-id for the stereo pair (default: 0, right = id+1)\n"
               << "  --model <path>       Path to TorchScript model file\n"
               << "  --help               Show this help message\n"
               << "\nKeyboard shortcuts:\n"
@@ -42,7 +42,8 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    std::cout << "Camera ID: " << camera_id << std::endl;
+    int right_camera_id = camera_id + 1;
+    std::cout << "Stereo CSI sensors: left=" << camera_id << " right=" << right_camera_id << std::endl;
     if (!model_path.empty()) {
         std::cout << "Model path: " << model_path << std::endl;
     } else {
@@ -57,7 +58,7 @@ int main(int argc, char* argv[]) {
 
    NanoTrigger trigger("/dev/ttyACM0", 0.75);  // triggers when confidence > 75%
 
-    if (!trigger.isOpen()) return 1;
+   // if (!trigger.isOpen()) return 1;
     if (!trigger.ping()) {
         // Not fatal, but worth logging; Nano may still be booting
         printf("[main] Nano ping failed — continuing anyway\n");
@@ -65,7 +66,7 @@ int main(int argc, char* argv[]) {
 
 
     // Create thread objects
-    CameraThread camera_thread(state, camera_id);
+    CameraThread camera_thread(state, camera_id, right_camera_id);
     ClassifierThread classifier_thread(state);
     CorrelationThread correlation_thread(state, &trigger);
 
