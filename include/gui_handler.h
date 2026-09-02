@@ -26,6 +26,7 @@ private:
     static constexpr int kManualLegRowY    = 215;
     static constexpr int kManualActLabelY  = 250;
     static constexpr int kManualActRowY    = 260;
+    static constexpr int kManualActAllRowY = 296;
 
     // Trackbar variables
     static int confidence_trackbar_value_;
@@ -44,6 +45,8 @@ private:
     cv::Rect motorsToggleRect() const;
     cv::Rect legButtonRect(int leg, int which) const;          // which: 0=B, 1=F
     cv::Rect actuatorButtonRect(int act, int which) const;    // which: 0=E, 1=R, 2=S
+    cv::Rect extendAllFeetRect() const;
+    cv::Rect retractAllFeetRect() const;
     void drawManualControlPanel();
     bool handleManualControlClick(int x, int y);
 

@@ -66,20 +66,34 @@ int main(int argc, char* argv[]) {
         // Startup homing sequence. No position sensors exist on the Mega
         // side (see mega_stepper_controller.ino), so each step blocks for
         // the full/half travel time before the next command, matching the
-        // Mega's MAX_ACTUATOR_ON_MS/HALF_ACTUATOR_ON_MS - this is what lets
-        // actuatorLastDir be trusted when M2/M3 infer their mid-move
-        // direction below. Target layout: L0/L1 extended, L2/L3 mid,
-        // L4/L5 retracted.
-        std::cout << "[main] Running actuator homing sequence..." << std::endl;
+        // Mega's MAX_ACTUATOR_ON_MS/MAX_HIP_ON_MS/HALF_*_ON_MS - this is
+        // what lets actuatorLastDir/hipLastDir be trusted when the mid
+        // moves below infer their direction.
+        //
+        // Step 1: all feet (extend/retract actuators) retract.
+        // Step 2: hips (swing/pivot) - Hip0/1 forward, Hip4/5 back, and
+        // Hip2/3 also driven back (bundled with 4/5) purely to give them a
+        // known starting stop for their mid move next - avoids a pointless
+        // full back-then-forward cycle on 2/3.
+        // Step 3: Hip2/3 to mid.
+        std::cout << "[main] Running startup homing sequence..." << std::endl;
         steppers.setMotorsEnabled(true);
-        steppers.retractAllActuators();
+
+        steppers.retractAllActuators();  // all feet retract
         std::this_thread::sleep_for(std::chrono::milliseconds(3000));
-        steppers.extendActuator(0);
-        steppers.extendActuator(1);
-        std::this_thread::sleep_for(std::chrono::milliseconds(3000));
-        steppers.moveActuatorToMid(2);
-        steppers.moveActuatorToMid(3);
-        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+
+        steppers.moveLegForward(0);  // Hip0 forward
+        steppers.moveLegForward(1);  // Hip1 forward
+        steppers.moveLegBack(2);     // Hip2 back (known stop for mid, below)
+        steppers.moveLegBack(3);     // Hip3 back (known stop for mid, below)
+        steppers.moveLegBack(4);     // Hip4 back
+        steppers.moveLegBack(5);     // Hip5 back
+        std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+
+        steppers.moveLegToMid(2);
+        steppers.moveLegToMid(3);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+
         std::cout << "[main] Homing sequence complete." << std::endl;
     }
 

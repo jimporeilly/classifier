@@ -10,7 +10,7 @@ GUIHandler::GUIHandler(std::shared_ptr<AppState> state, StepperController* stepp
       stepper_(stepper),
       window_name_("Camera Classifier"),
       panel_width_(1280),
-      panel_height_(300),
+      panel_height_(335),
       stats_height_(30),
       frame_display_width_(640),
       frame_display_height_(480),
@@ -156,6 +156,14 @@ cv::Rect GUIHandler::actuatorButtonRect(int act, int which) const {
     return cv::Rect(x, kManualActRowY, btn_w, btn_h);
 }
 
+cv::Rect GUIHandler::extendAllFeetRect() const {
+    return cv::Rect(10, kManualActAllRowY, 150, 28);
+}
+
+cv::Rect GUIHandler::retractAllFeetRect() const {
+    return cv::Rect(170, kManualActAllRowY, 150, 28);
+}
+
 void GUIHandler::drawManualControlPanel() {
     const cv::Scalar text_color(220, 220, 220);
 
@@ -177,12 +185,12 @@ void GUIHandler::drawManualControlPanel() {
                     cv::FONT_HERSHEY_SIMPLEX, 0.55, cv::Scalar(0, 0, 255), 2);
     }
 
-    // Per-leg forward/back buttons
-    cv::putText(control_panel_, "LEGS", cv::Point(10, kManualLegLabelY),
+    // Per-leg forward/back buttons (swing/pivot, aka "hip")
+    cv::putText(control_panel_, "HIPS", cv::Point(10, kManualLegLabelY),
                 cv::FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1);
     for (int leg = 0; leg < StepperController::kNumLegs; leg++) {
         int phys = kPhysicalIndex[leg];
-        std::string label = "L" + std::to_string(phys);
+        std::string label = "Hip" + std::to_string(phys);
         cv::putText(control_panel_, label, cv::Point(10 + leg * 210, kManualLegLabelY),
                     cv::FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1);
         drawButton(control_panel_, legButtonRect(leg, 0), "B" + std::to_string(phys), cv::Scalar(150, 150, 255));
@@ -192,12 +200,12 @@ void GUIHandler::drawManualControlPanel() {
         drawButton(control_panel_, legButtonRect(leg, 2), "H" + std::to_string(phys), cv::Scalar(0, 200, 255));
     }
 
-    // Per-actuator extend/retract/stop buttons
-    cv::putText(control_panel_, "ACTUATORS", cv::Point(10, kManualActLabelY),
+    // Per-actuator extend/retract/stop buttons (leg-length, aka "foot")
+    cv::putText(control_panel_, "FEET", cv::Point(10, kManualActLabelY),
                 cv::FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1);
     for (int act = 0; act < StepperController::kNumActuators; act++) {
         int phys = kPhysicalIndex[act];
-        std::string label = "A" + std::to_string(phys);
+        std::string label = "Foot" + std::to_string(phys);
         cv::putText(control_panel_, label, cv::Point(10 + act * 210, kManualActLabelY),
                     cv::FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1);
         drawButton(control_panel_, actuatorButtonRect(act, 0), "E", cv::Scalar(150, 255, 150));
@@ -205,6 +213,10 @@ void GUIHandler::drawManualControlPanel() {
         drawButton(control_panel_, actuatorButtonRect(act, 2), "R", cv::Scalar(150, 150, 255));
         drawButton(control_panel_, actuatorButtonRect(act, 3), "S", cv::Scalar(180, 180, 180));
     }
+
+    // All-feet extend/retract shortcuts
+    drawButton(control_panel_, extendAllFeetRect(), "EXTEND ALL", cv::Scalar(150, 255, 150));
+    drawButton(control_panel_, retractAllFeetRect(), "RETRACT ALL", cv::Scalar(150, 150, 255));
 }
 
 bool GUIHandler::handleManualControlClick(int x, int y) {
@@ -232,6 +244,15 @@ bool GUIHandler::handleManualControlClick(int x, int y) {
             if (stepper_) stepper_->moveLegToMid(phys);
             return true;
         }
+    }
+
+    if (extendAllFeetRect().contains(p)) {
+        if (stepper_) stepper_->extendAllActuators();
+        return true;
+    }
+    if (retractAllFeetRect().contains(p)) {
+        if (stepper_) stepper_->retractAllActuators();
+        return true;
     }
 
     for (int act = 0; act < StepperController::kNumActuators; act++) {
