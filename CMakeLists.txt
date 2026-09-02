@@ -40,6 +40,7 @@ add_executable(camera_classifier
     src/correlation_thread.cpp
     src/gui_handler.cpp
     src/nano_trigger.cpp
+    src/stepper_controller.cpp
 )
 
 # Link libraries (FIXED: OpenCV_LIBRARIES not OpenCV_LIBS)

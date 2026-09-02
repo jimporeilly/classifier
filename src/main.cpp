@@ -3,8 +3,9 @@
 #include "classifier_thread.h"
 #include "correlation_thread.h"
 #include "gui_handler.h"
-#include "nano_trigger.h"
+#include "stepper_controller.h"
 
+#include <chrono>
 #include <iostream>
 #include <memory>
 #include <thread>
@@ -56,21 +57,38 @@ int main(int argc, char* argv[]) {
     state->camera_id = camera_id;
     state->status_message = "Initializing...";
 
-   NanoTrigger trigger("/dev/ttyACM0", 0.75);  // triggers when confidence > 75%
+    StepperController steppers("/dev/ttyACM0", state);  // Mega running mega_stepper_controller.ino
+    if (!steppers.isOpen()) {
+        printf("[main] Failed to open Mega serial port — continuing anyway\n");
+    } else {
+        steppers.requestStatus();  // '?' handshake; reply logged via [Mega] console lines
 
-   // if (!trigger.isOpen()) return 1;
-    if (!trigger.ping()) {
-        // Not fatal, but worth logging; Nano may still be booting
-        printf("[main] Nano ping failed — continuing anyway\n");
+        // Startup homing sequence. No position sensors exist on the Mega
+        // side (see mega_stepper_controller.ino), so each step blocks for
+        // the full/half travel time before the next command, matching the
+        // Mega's MAX_ACTUATOR_ON_MS/HALF_ACTUATOR_ON_MS - this is what lets
+        // actuatorLastDir be trusted when M2/M3 infer their mid-move
+        // direction below. Target layout: L0/L1 extended, L2/L3 mid,
+        // L4/L5 retracted.
+        std::cout << "[main] Running actuator homing sequence..." << std::endl;
+        steppers.setMotorsEnabled(true);
+        steppers.retractAllActuators();
+        std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+        steppers.extendActuator(0);
+        steppers.extendActuator(1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+        steppers.moveActuatorToMid(2);
+        steppers.moveActuatorToMid(3);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        std::cout << "[main] Homing sequence complete." << std::endl;
     }
-
 
     // Create thread objects
     CameraThread camera_thread(state, camera_id, right_camera_id);
     ClassifierThread classifier_thread(state);
-    CorrelationThread correlation_thread(state, &trigger);
+    CorrelationThread correlation_thread(state, nullptr);  // Nano retired; no motion-trigger board wired up
 
-    GUIHandler gui(state, &trigger);
+    GUIHandler gui(state, &steppers);
 
     // Load model if specified
     if (!model_path.empty()) {

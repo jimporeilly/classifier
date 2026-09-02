@@ -5,12 +5,12 @@
 int GUIHandler::confidence_trackbar_value_ = 50;
 int GUIHandler::correlation_trackbar_value_ = 10;  // ADD THIS LINE
 
-GUIHandler::GUIHandler(std::shared_ptr<AppState> state, NanoTrigger* trigger)
+GUIHandler::GUIHandler(std::shared_ptr<AppState> state, StepperController* stepper)
     : state_(state),
-      trigger_(trigger),
+      stepper_(stepper),
       window_name_("Camera Classifier"),
       panel_width_(1280),
-      panel_height_(180),
+      panel_height_(300),
       stats_height_(30),
       frame_display_width_(640),
       frame_display_height_(480),
@@ -24,8 +24,6 @@ GUIHandler::~GUIHandler() {
 void GUIHandler::onConfidenceChange(int value, void* userdata) {
     GUIHandler* gui = static_cast<GUIHandler*>(userdata);
     gui->state_->confidence_threshold = value / 100.0f;
-    if (gui->trigger_)
-    gui->trigger_->setThreshold(value / 100.0f);  // keep trigger in sync
 }
 
 void GUIHandler::initialize() {
@@ -83,10 +81,7 @@ void GUIHandler::updateControlPanel() {
     drawButton(control_panel_, cv::Rect(btn_x0 +   btn_w + btn_gap,   btn_y, btn_w, btn_h), "CAPTURE",     cv::Scalar(150, 150, 255));
     drawButton(control_panel_, cv::Rect(btn_x0 + 2*(btn_w + btn_gap), btn_y, btn_w, btn_h), "CLEAR QUEUE", cv::Scalar(200, 200, 100));
     drawButton(control_panel_, cv::Rect(btn_x0 + 3*(btn_w + btn_gap), btn_y, btn_w, btn_h), "EXIT",        cv::Scalar(80, 80, 180));
-    drawButton(control_panel_, cv::Rect(btn_x0 + 3*(btn_w + btn_gap), btn_y, btn_w, btn_h), "EXIT",        cv::Scalar(80, 80, 180));
-    drawButton(control_panel_, cv::Rect(btn_x0 + 4*(btn_w + btn_gap), btn_y, btn_w, btn_h), "TRIGGER D2",  cv::Scalar(0, 140, 255));
-    drawButton(control_panel_, cv::Rect(btn_x0 + 4*(btn_w + btn_gap), btn_y, btn_w, btn_h), "TRIGGER D2",  cv::Scalar(0, 140, 255));
-    drawButton(control_panel_, cv::Rect(btn_x0 + 5*(btn_w + btn_gap), btn_y, btn_w, btn_h), auto_text, auto_color);
+    drawButton(control_panel_, cv::Rect(btn_x0 + 4*(btn_w + btn_gap), btn_y, btn_w, btn_h), auto_text, auto_color);
 
     // --- Info row ---
     const int info_y = btn_y + btn_h + 25;
@@ -125,6 +120,141 @@ void GUIHandler::updateControlPanel() {
         cv::putText(control_panel_, conf_buf, cv::Point(col2_x, info_y + 60),
                    cv::FONT_HERSHEY_SIMPLEX, 0.5, text_color, 1);
     }
+
+    drawManualControlPanel();
+}
+
+// ── Manual hexapod control panel ────────────────────────────────────────────
+
+namespace {
+// GUI leg/actuator slots 0-5 were labeled backwards against the physical
+// hexapod wiring (0<->4, 1<->5, 2<->3 swapped), and slots 0/1 additionally
+// needed L4/L5 swapped back. This maps a screen slot to the physical
+// leg/actuator number, used for both the on-screen label and the index
+// sent to the Arduino so the two stay consistent.
+constexpr int kPhysicalIndex[6] = {5, 4, 3, 2, 1, 0};
+}  // namespace
+
+cv::Rect GUIHandler::motorsToggleRect() const {
+    return cv::Rect(10, kManualToggleRowY, 130, 30);
+}
+
+cv::Rect GUIHandler::legButtonRect(int leg, int which) const {
+    // which: 0=Back, 1=Forward
+    const int col_w = 210, btn_w = 60, btn_h = 28, gap = 5;
+    int col_x0 = 10 + leg * col_w;
+    int x = col_x0 + which * (btn_w + gap);
+    return cv::Rect(x, kManualLegRowY, btn_w, btn_h);
+}
+
+cv::Rect GUIHandler::actuatorButtonRect(int act, int which) const {
+    // which: 0=Extend, 1=Mid, 2=Retract, 3=Stop. Narrower than the hip
+    // buttons (4 buttons vs 3) so the row still fits in the 210px column.
+    const int col_w = 210, btn_w = 45, btn_h = 26, gap = 5;
+    int col_x0 = 10 + act * col_w;
+    int x = col_x0 + which * (btn_w + gap);
+    return cv::Rect(x, kManualActRowY, btn_w, btn_h);
+}
+
+void GUIHandler::drawManualControlPanel() {
+    const cv::Scalar text_color(220, 220, 220);
+
+    // Motors ON/OFF toggle
+    bool enabled = state_->steppers_enabled;
+    drawButton(control_panel_, motorsToggleRect(), enabled ? "MOTORS: ON" : "MOTORS: OFF",
+               enabled ? cv::Scalar(0, 200, 0) : cv::Scalar(0, 0, 180));
+
+    // Battery voltage + warning indicator, to the right of the toggle
+    float volts = state_->battery_voltage;
+    char batt_buf[48];
+    if (volts >= 0.0f) snprintf(batt_buf, sizeof(batt_buf), "BATTERY: %.2fV", volts);
+    else snprintf(batt_buf, sizeof(batt_buf), "BATTERY: --");
+    cv::putText(control_panel_, batt_buf, cv::Point(160, kManualToggleRowY + 20),
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, text_color, 1);
+
+    if (state_->battery_warning) {
+        cv::putText(control_panel_, "LOW BATTERY", cv::Point(340, kManualToggleRowY + 20),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.55, cv::Scalar(0, 0, 255), 2);
+    }
+
+    // Per-leg forward/back buttons
+    cv::putText(control_panel_, "LEGS", cv::Point(10, kManualLegLabelY),
+                cv::FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1);
+    for (int leg = 0; leg < StepperController::kNumLegs; leg++) {
+        int phys = kPhysicalIndex[leg];
+        std::string label = "L" + std::to_string(phys);
+        cv::putText(control_panel_, label, cv::Point(10 + leg * 210, kManualLegLabelY),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1);
+        drawButton(control_panel_, legButtonRect(leg, 0), "B" + std::to_string(phys), cv::Scalar(150, 150, 255));
+        drawButton(control_panel_, legButtonRect(leg, 1), "F" + std::to_string(phys), cv::Scalar(150, 255, 150));
+        // Timed half-travel ("mid") move - direction inferred by the Mega
+        // from the last F/B sent for this leg; see stepper_controller.h.
+        drawButton(control_panel_, legButtonRect(leg, 2), "H" + std::to_string(phys), cv::Scalar(0, 200, 255));
+    }
+
+    // Per-actuator extend/retract/stop buttons
+    cv::putText(control_panel_, "ACTUATORS", cv::Point(10, kManualActLabelY),
+                cv::FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1);
+    for (int act = 0; act < StepperController::kNumActuators; act++) {
+        int phys = kPhysicalIndex[act];
+        std::string label = "A" + std::to_string(phys);
+        cv::putText(control_panel_, label, cv::Point(10 + act * 210, kManualActLabelY),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1);
+        drawButton(control_panel_, actuatorButtonRect(act, 0), "E", cv::Scalar(150, 255, 150));
+        drawButton(control_panel_, actuatorButtonRect(act, 1), "M", cv::Scalar(0, 200, 255));
+        drawButton(control_panel_, actuatorButtonRect(act, 2), "R", cv::Scalar(150, 150, 255));
+        drawButton(control_panel_, actuatorButtonRect(act, 3), "S", cv::Scalar(180, 180, 180));
+    }
+}
+
+bool GUIHandler::handleManualControlClick(int x, int y) {
+    const cv::Point p(x, y);
+
+    if (motorsToggleRect().contains(p)) {
+        bool new_state = !state_->steppers_enabled;
+        if (stepper_) stepper_->setMotorsEnabled(new_state);
+        std::lock_guard<std::mutex> lock(state_->message_mutex);
+        state_->status_message = new_state ? "Motors enabled" : "Motors disabled";
+        return true;
+    }
+
+    for (int leg = 0; leg < StepperController::kNumLegs; leg++) {
+        int phys = kPhysicalIndex[leg];
+        if (legButtonRect(leg, 1).contains(p)) {
+            if (stepper_) stepper_->moveLegForward(phys);
+            return true;
+        }
+        if (legButtonRect(leg, 0).contains(p)) {
+            if (stepper_) stepper_->moveLegBack(phys);
+            return true;
+        }
+        if (legButtonRect(leg, 2).contains(p)) {
+            if (stepper_) stepper_->moveLegToMid(phys);
+            return true;
+        }
+    }
+
+    for (int act = 0; act < StepperController::kNumActuators; act++) {
+        int phys = kPhysicalIndex[act];
+        if (actuatorButtonRect(act, 0).contains(p)) {
+            if (stepper_) stepper_->extendActuator(phys);
+            return true;
+        }
+        if (actuatorButtonRect(act, 1).contains(p)) {
+            if (stepper_) stepper_->moveActuatorToMid(phys);
+            return true;
+        }
+        if (actuatorButtonRect(act, 2).contains(p)) {
+            if (stepper_) stepper_->retractActuator(phys);
+            return true;
+        }
+        if (actuatorButtonRect(act, 3).contains(p)) {
+            if (stepper_) stepper_->stopActuator(phys);
+            return true;
+        }
+    }
+
+    return false;
 }
 
 void GUIHandler::handleMouseClick(int event, int x, int y) {
@@ -140,7 +270,7 @@ void GUIHandler::handleMouseClick(int event, int x, int y) {
         state_->status_message = state_->paused ? "Processing paused" : "Processing resumed";
         return;
     }
-    if (cv::Rect(btn_x0 + 5*(btn_w + btn_gap), btn_y, btn_w, btn_h).contains(cv::Point(x, panel_y))) {
+    if (cv::Rect(btn_x0 + 4*(btn_w + btn_gap), btn_y, btn_w, btn_h).contains(cv::Point(x, panel_y))) {
     state_->trigger_enabled = !state_->trigger_enabled;
     std::lock_guard<std::mutex> lock(state_->message_mutex);
     state_->status_message = state_->trigger_enabled ? "Auto-trigger ON" : "Auto-trigger OFF";
@@ -160,14 +290,8 @@ void GUIHandler::handleMouseClick(int event, int x, int y) {
         state_->running = false;
         return;
     }
-    if (cv::Rect(btn_x0 + 4*(btn_w + btn_gap), btn_y, btn_w, btn_h).contains(cv::Point(x, panel_y))) {
-    if (trigger_ && trigger_->isOpen()) {
-        trigger_->manualTrigger();
-        std::lock_guard<std::mutex> lock(state_->message_mutex);
-        state_->status_message = "D2 triggered manually";
-    }
-    return;
-}
+
+    if (handleManualControlClick(x, panel_y)) return;
 }
 
 void GUIHandler::mouseCallback(int event, int x, int y, int flags, void* userdata) {

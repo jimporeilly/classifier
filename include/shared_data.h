@@ -83,6 +83,11 @@ struct AppState {
     std::atomic<bool> correlation_done{true};
     std::atomic<bool> trigger_enabled{false};  // default OFF on startup
 
+    // Hexapod leg/actuator controller (Arduino Mega) state
+    std::atomic<float> battery_voltage{-1.0f};   // -1 = no reading yet
+    std::atomic<bool> battery_warning{false};    // latched once BATT_WARN seen
+    std::atomic<bool> steppers_enabled{false};   // mirrors ON/OFF sent to Mega
+
     std::mutex message_mutex;
     std::string status_message;
 

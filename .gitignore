@@ -30,3 +30,6 @@ libtorch/
 .DS_Store
 Thumbs.db
 *.whl
+
+# Secrets
+token.txt

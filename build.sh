@@ -2,13 +2,17 @@
 set -e
 echo "=== Camera Classifier Build Script ==="
 
-# Auto-detect libtorch location
-if [ -d "/opt/libtorch" ]; then
+# Auto-detect libtorch location. Order matches CMakeLists.txt: the pip-installed
+# torch under site-packages is the one known to be built for this machine's
+# arch (aarch64 on Jetson); /opt/libtorch and ~/libtorch are checked after as
+# manual-install fallbacks, since a stale/wrong-arch copy can otherwise shadow
+# the working one (e.g. an x86-64 ~/libtorch left over from another machine).
+if [ -d "$HOME/.local/lib/python3.10/site-packages/torch" ]; then
+    TORCH_LIB="$HOME/.local/lib/python3.10/site-packages/torch"
+elif [ -d "/opt/libtorch" ]; then
     TORCH_LIB="/opt/libtorch"
 elif [ -d "$HOME/libtorch" ]; then
     TORCH_LIB="$HOME/libtorch"
-elif [ -d "$HOME/.local/lib/python3.10/site-packages/torch" ]; then
-    TORCH_LIB="$HOME/.local/lib/python3.10/site-packages/torch"
 else
     echo "Error: libtorch not found"
     exit 1
